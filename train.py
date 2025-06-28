@@ -2,16 +2,17 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torchvision
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import numpy as np
-from network import Generator, Discriminator
-from dataloader import get_dataloader
+from network import *
+from dataloader import *
 from tqdm import tqdm
 import multiprocessing
 
-# 超参数
-img_dim = 64
+
+img_dim = 128
 lr = 0.0002
 epochs = 5
 batch_size = 128
@@ -22,21 +23,18 @@ output_path = 'output'
 real_label = 1
 fake_label = 0
 
-# 设置设备（优先 MPS > CUDA > CPU）
+# 设置设备
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# 修改后的设备选择逻辑（添加到原始代码开头）
 device = torch.device(
-    "mps" if torch.backends.mps.is_available() else
-    "cuda" if torch.cuda.is_available() else
-    "cpu"
+    'mps' if torch.backends.mps.is_available() else  # 优先尝试 MPS
+    'cuda' if torch.cuda.is_available() else         # 其次 CUDA
+    'cpu'                                           # 最后 CPU
 )
-print(f"Using device: {device}")
+# print(f"Using device: {device}")
 
-def main():
-    # 数据加载
-    train_loader = get_dataloader(
-        batch_size=batch_size,
-        img_dim=img_dim,
-        pin_memory=False if str(device) == "mps" else True  # MPS 不支持 pin_memory
-    )
+def main(): 
+    os.makedirs(output_path, exist_ok=True)  # 自动创建目录（如果不存在）
 
     # 定义模型
     netD = Discriminator().to(device)
@@ -50,18 +48,19 @@ def main():
     # 训练过程
     losses = [[], []]
     plt.ioff()
-    
+    now = 0 # now 变量似乎未使用，可以考虑移除
     for epoch in range(epochs):
         for batch_id, data in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}/{epochs}", leave=False)):
             ############################
             # (1) 更新判别器 D
             ###########################
-            netD.zero_grad()
+            optimizerD.zero_grad()
             real_cpu = data.to(device)
-            current_batch_size = real_cpu.size(0)
+            current_batch_size = real_cpu.size(0) 
             label = torch.full((current_batch_size,), real_label, dtype=torch.float, device=device)
 
-            output = netD(real_cpu).view(-1)
+            output = netD(real_cpu).view(-1) # 确保输出是一维的
+            
             errD_real = criterion(output, label)
             errD_real.backward()
 
@@ -77,7 +76,7 @@ def main():
             ############################
             # (2) 更新生成器 G
             ###########################
-            netG.zero_grad()
+            optimizerG.zero_grad()
             label.fill_(real_label)
             output = netD(fake).view(-1)
             errG = criterion(output, label)
@@ -87,31 +86,37 @@ def main():
             losses[0].append(errD.item())
             losses[1].append(errG.item())
 
-            # 每 100 个 batch 保存一次 loss 曲线
             if batch_id % 100 == 0:
-                plt.figure(figsize=(15, 6))
-                plt.title('Generator and Discriminator Loss During Training')
-                plt.xlabel('Number of Batch')
-                plt.plot(np.arange(len(losses[0])), np.array(losses[0]), label='D Loss')
-                plt.plot(np.arange(len(losses[1])), np.array(losses[1]), label='G Loss')
-                plt.legend()
-                plt.savefig(os.path.join(output_path, 'loss_curve_temp.png'))
-                plt.close()
+                try:
+                    if now % 500 == 0:
+                        plt.figure(figsize=(15, 6))
+                        x_ = np.arange(len(losses[0]))
+                        plt.title('Generator and Discriminator Loss During Training')
+                        plt.xlabel('Number of Batch')
+                        plt.plot(x_, np.array(losses[0]), label='D Loss')
+                        plt.plot(x_, np.array(losses[1]), label='G Loss')
+                        plt.legend()
+                        plt.savefig(os.path.join(output_path, 'loss_curve_temp.png'))
+                        plt.close() # 关闭图像以释放内存
+                    now += 1
+                except IOError:
+                    print(IOError)
 
     # 训练结束后的操作
+    plt.close()
+    plt.figure(figsize=(15, 6))
+    x_axis = np.arange(len(losses[0]))
+    plt.title('Generator and Discriminator Loss During Training')
+    plt.xlabel('Number of Batch')
+    plt.plot(x_axis, np.array(losses[0]), label='D Loss')
+    plt.plot(x_axis, np.array(losses[1]), label='G Loss')
+    plt.legend()
+    plt.savefig('Generator_and_Discriminator_Loss_During_Training.png')
+    plt.close()
+
     torch.save(netG.state_dict(), "generator.params")
     print("Generator model saved as generator.params")
 
-    # 绘制最终 loss 曲线
-    plt.figure(figsize=(15, 6))
-    plt.title('Final Generator and Discriminator Loss')
-    plt.xlabel('Number of Batch')
-    plt.plot(np.arange(len(losses[0])), np.array(losses[0]), label='D Loss')
-    plt.plot(np.arange(len(losses[1])), np.array(losses[1]), label='G Loss')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, 'final_loss_curve.png'))
-    plt.close()
-
 if __name__ == '__main__':
-    multiprocessing.freeze_support()
-    main()
+    multiprocessing.freeze_support() # 添加 freeze_support()
+    main() # 调用主函数
